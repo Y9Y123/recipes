@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { getAllRecipes, getAllRoutablePairs, findVariantRedirect, getRecipeByHfId } from "@/lib/recipes";
-import { recipeHref, toBuilderRecipe } from "@/lib/recipe-utils";
+import { omniOutputs, recipeHref, toBuilderRecipe } from "@/lib/recipe-utils";
 import { siteUrl } from "@/lib/site-url";
 import { loadStrategies } from "@/lib/strategies";
 import { loadTaxonomy } from "@/lib/taxonomy";
@@ -18,6 +18,8 @@ import { ReferenceTabs } from "@/components/recipes/ConfigSections";
 import { whenLabels } from "@/lib/recipe-context";
 import { DeployDialog } from "@/components/recipes/DeployDialog";
 import { HuggingFaceIcon } from "@/components/icons/PlatformLogos";
+import { OmniMark } from "@/components/icons/OmniMark";
+import { TASK_ICON, TASK_LABEL, OUTPUT_ICON, OUTPUT_LABEL } from "@/components/recipes/task-icons";
 import ShellCode from "@/components/recipes/ShellCode";
 import { SHELL_LANGS } from "@/lib/shell-highlight";
 import Markdown from "react-markdown";
@@ -101,6 +103,26 @@ export async function generateMetadata({ params }) {
   };
 }
 
+// The header's task badges, matching the cards: most specific first, "text"
+// dropped when the model is more than a text model (VLM YAMLs list it either
+// way, in either order), and an omni recipe showing what it generates, since
+// the vLLM-Omni badge beside it already says how it is served.
+const HEADER_KIND_ORDER = ["omni", "embedding", "multimodal", "text"];
+function recipeHeaderKinds(recipe) {
+  const tasks = recipe.meta.tasks || [];
+  const kinds = HEADER_KIND_ORDER.filter((t) => tasks.includes(t));
+  const shown = kinds.length > 1 ? kinds.filter((t) => t !== "text") : kinds;
+  return shown.flatMap((t) => {
+    if (t === "omni") {
+      const outputs = omniOutputs(recipe);
+      if (outputs.length) {
+        return outputs.map((o) => ({ key: `omni-${o}`, label: OUTPUT_LABEL[o], Icon: OUTPUT_ICON[o] }));
+      }
+    }
+    return [{ key: t, label: TASK_LABEL[t] || t, Icon: t === "omni" ? null : TASK_ICON[t] }];
+  });
+}
+
 export default async function RecipePage({ params, searchParams }) {
   const { org, repo } = await params;
   const recipe = getRecipeByHfId(org, repo);
@@ -120,6 +142,7 @@ export default async function RecipePage({ params, searchParams }) {
   }
 
   const versionLink = vllmVersionLink(recipe.model);
+  const headerKinds = recipeHeaderKinds(recipe);
   const strategies = loadStrategies();
   const taxonomy = loadTaxonomy();
   const guide = recipe.guide || "";
@@ -250,7 +273,10 @@ export default async function RecipePage({ params, searchParams }) {
               ? ` / ${recipe.model.active_parameters}`
               : ""}
           </Badge>
-          <Badge variant="outline" className="text-xs">{(recipe.model.context_length || 0).toLocaleString()} ctx</Badge>
+          {/* Context length means nothing for image / video / audio generation. */}
+          {recipe.model.context_length > 0 && !recipe.meta.tasks?.includes("omni") && (
+            <Badge variant="outline" className="text-xs">{recipe.model.context_length.toLocaleString()} ctx</Badge>
+          )}
           {versionLink && <a
             href={versionLink.href}
             target="_blank"
@@ -270,13 +296,17 @@ export default async function RecipePage({ params, searchParams }) {
               title="vLLM-Omni serves the generation (omni) path — nightly wheels"
               className="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs font-medium w-fit whitespace-nowrap transition-colors hover:border-vllm-blue/50 hover:text-vllm-blue"
             >
+              <OmniMark size={12} className="mr-1" />
               vLLM-Omni
               <span className="ml-1 text-vllm-yellow">nightly</span>
               <ExternalLink size={10} className="ml-1 opacity-50" />
             </a>
           )}
-          {recipe.meta.tasks?.map((t) => (
-            <Badge key={t} variant="secondary" className="text-xs capitalize">{t}</Badge>
+          {headerKinds.map(({ key, label, Icon }) => (
+            <Badge key={key} variant="secondary" className="text-xs gap-1">
+              {Icon && <Icon size={11} className="opacity-70" />}
+              {label}
+            </Badge>
           ))}
         </div>
       </header>
